@@ -6,9 +6,9 @@ Students should extend the schema only when needed. Keep state lean and serializ
 from __future__ import annotations
 
 from enum import StrEnum
+from operator import add
 from typing import Annotated, Any, TypedDict
 
-from operator import add
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -41,8 +41,12 @@ class ApprovalDecision(BaseModel):
 class AgentState(TypedDict, total=False):
     """LangGraph state.
 
-    TODO(student): decide which fields should be append-only and which should be overwritten.
-    The current annotations give a safe starting point for auditability.
+    Append-only fields (``Annotated[list, add]`` merge via ``operator.add``):
+    ``messages``, ``tool_results``, ``errors``, ``events``.
+
+    Scalar fields (last write wins): ``thread_id``, ``scenario_id``, ``query``, ``route``,
+    ``risk_level``, ``attempt``, ``max_attempts``, ``final_answer``, ``pending_question``,
+    ``proposed_action``, ``approval``, ``evaluation_result``, ``should_retry``.
     """
 
     thread_id: str
@@ -52,6 +56,7 @@ class AgentState(TypedDict, total=False):
     risk_level: str
     attempt: int
     max_attempts: int
+    should_retry: bool
     final_answer: str | None
     pending_question: str | None
     proposed_action: str | None
@@ -90,6 +95,7 @@ def initial_state(scenario: Scenario) -> AgentState:
         "risk_level": "unknown",
         "attempt": 0,
         "max_attempts": scenario.max_attempts,
+        "should_retry": scenario.should_retry,
         "final_answer": None,
         "pending_question": None,
         "proposed_action": None,

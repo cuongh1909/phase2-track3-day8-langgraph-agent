@@ -21,21 +21,30 @@ from .nodes import (
     risky_action_node,
     tool_node,
 )
-from .routing import route_after_approval, route_after_classify, route_after_evaluate, route_after_retry
+from .routing import (
+    route_after_approval,
+    route_after_classify,
+    route_after_evaluate,
+    route_after_retry,
+)
 from .state import AgentState
 
 
 def build_graph(checkpointer: Any | None = None):
     """Build and compile the LangGraph workflow.
 
-    TODO(student): review the architecture and modify nodes/edges only with a clear reason.
-    Required behaviors:
-    - intake -> classify (normalization + routing)
-    - classify routes to answer/tool/clarify/risky/retry
-    - tool -> evaluate creates the retry loop (slide: "done?" check)
-    - risky path requires approval before tool/action
-    - retry loop bounded by max_attempts -> dead_letter on exhaustion
-    - all paths eventually reach finalize -> END
+    Topology (Phase 1)::
+
+        START → intake → classify → [conditional]
+          simple       → answer → finalize → END
+          tool         → tool → evaluate → answer → finalize → END
+          missing_info → clarify → finalize → END
+          risky        → risky_action → approval → tool → evaluate → answer → finalize → END
+          error        → retry → tool → evaluate → [retry | answer] → … → finalize → END
+          (retry exhausted) → dead_letter → finalize → END
+
+    ``evaluate`` → ``retry`` when ``evaluation_result == "needs_retry"``; ``retry`` increments
+    ``attempt`` and routes to ``tool`` or ``dead_letter`` based on ``max_attempts``.
     """
     try:
         from langgraph.graph import END, START, StateGraph

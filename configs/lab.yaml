@@ -1,3 +1,6 @@
 scenarios_path: data/sample/scenarios.jsonl
 checkpointer: memory
+# Phase 2: SQLite + WAL (see persistence.build_checkpointer)
+# checkpointer: sqlite
+# database_url: checkpoints.db
 report_path: reports/lab_report.md

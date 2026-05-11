@@ -42,6 +42,63 @@ def run_scenarios(
     typer.echo(f"Wrote metrics to {output}")
 
 
+@app.command("export-mermaid")
+def export_mermaid(
+    output: Annotated[Path, typer.Option("--output", help="Path for .mmd file")] = Path(
+        "outputs/graph.mmd",
+    ),
+) -> None:
+    """Phase 4 bonus: export the main workflow as Mermaid (``draw_mermaid()``)."""
+    from .bonus_extensions import export_main_workflow_mermaid
+
+    text = export_main_workflow_mermaid()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(text, encoding="utf-8")
+    typer.echo(f"Wrote Mermaid diagram to {output}")
+
+
+@app.command("demo-parallel-fanout")
+def demo_parallel_fanout(
+    query: Annotated[str, typer.Option("--query", help="Sample query stored in demo state")] = (
+        "lookup order 12345"
+    ),
+) -> None:
+    """Phase 4 bonus: run a tiny graph with ``Send()`` fan-out; merged ``tool_results``."""
+    from .bonus_extensions import run_parallel_fanout_demo
+
+    result = run_parallel_fanout_demo(query)
+    typer.echo(str(dict(result)))
+
+
+@app.command("demo-time-travel")
+def demo_time_travel(
+    sqlite_db: Annotated[
+        Path | None,
+        typer.Option("--sqlite-db", help="Optional SQLite DB path (uses memory if omitted)"),
+    ] = None,
+) -> None:
+    """Phase 4 bonus: print ``get_state_history`` and one ``get_state`` rewind."""
+    from .bonus_extensions import time_travel_demo_lines
+
+    path = str(sqlite_db) if sqlite_db else None
+    for line in time_travel_demo_lines(use_sqlite_path=path):
+        typer.echo(line)
+
+
+@app.command("demo-crash-recovery")
+def demo_crash_recovery(
+    sqlite_db: Annotated[
+        Path,
+        typer.Option("--sqlite-db", help="SQLite file path (created if missing)"),
+    ] = Path("outputs/crash_recovery_demo.db"),
+) -> None:
+    """Phase 4 bonus: close SQLite conn then reopen; checkpoints survive."""
+    from .bonus_extensions import sqlite_crash_recovery_demo_lines
+
+    for line in sqlite_crash_recovery_demo_lines(str(sqlite_db)):
+        typer.echo(line)
+
+
 @app.command("validate-metrics")
 def validate_metrics(metrics: Annotated[Path, typer.Option("--metrics")]) -> None:
     """Validate metrics JSON schema for grading."""

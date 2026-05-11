@@ -22,6 +22,7 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.5.0",
   "mypy>=1.10",
+  "langgraph-checkpoint-sqlite>=2.0",
 ]
 sqlite = ["langgraph-checkpoint-sqlite>=2.0"]
 postgres = ["langgraph-checkpoint-postgres>=2.0"]
@@ -44,3 +45,8 @@ ignore = ["ANN101", "ANN102"]
 minversion = "8.0"
 addopts = "-q --strict-markers"
 testpaths = ["tests"]
+# LangGraph imports JsonPlusSerializer from serde/encrypted; LangChain emits this until they
+# default `allowed_objects` — not actionable in student lab code.
+filterwarnings = [
+  "ignore:The default value of `allowed_objects` will change in a future version:langchain_core._api.deprecation.LangChainPendingDeprecationWarning",
+]

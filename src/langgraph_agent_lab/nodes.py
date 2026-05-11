@@ -6,7 +6,31 @@ input state in place.
 
 from __future__ import annotations
 
+import re
+
 from .state import AgentState, ApprovalDecision, Route, make_event
+
+_PUNCT_STRIP = "?!.,;:\"'()[]"
+
+# Classify: risky → tool → missing_info → error → simple (README order).
+_RISKY_TERMS = ("refund", "delete", "send", "cancel", "remove", "revoke")
+_TOOL_TERMS = ("status", "order", "lookup", "check", "track", "find", "search")
+_ERROR_TERMS = ("timeout", "fail", "failure", "error", "crash", "unavailable")
+_VAGUE_PRONOUNS = frozenset({"it", "this", "that", "them", "something", "anything", "someone"})
+
+
+def _word_tokens(query: str) -> list[str]:
+    return [w.strip(_PUNCT_STRIP).lower() for w in query.split() if w.strip(_PUNCT_STRIP)]
+
+
+def _has_whole_word(text_lower: str, terms: tuple[str, ...]) -> bool:
+    return any(re.search(rf"\b{re.escape(t)}\b", text_lower) for t in terms)
+
+
+def _is_missing_info(query_lower: str, tokens: list[str]) -> bool:
+    if len(tokens) >= 5:
+        return False
+    return bool(_VAGUE_PRONOUNS.intersection(tokens))
 
 
 def intake_node(state: AgentState) -> dict:
@@ -23,25 +47,26 @@ def intake_node(state: AgentState) -> dict:
 
 
 def classify_node(state: AgentState) -> dict:
-    """Classify the query into a route.
+    """Classify the query into a route using keyword heuristics (README table).
 
-    TODO(student): replace keyword heuristics with a clear routing policy.
-    Required routes: simple, tool, missing_info, risky, error.
+    Priority: risky → tool → missing_info → error → simple.
     """
-    query = state.get("query", "").lower()
-    words = query.split()
-    clean_words = [w.strip("?!.,;:") for w in words]
-    route = Route.SIMPLE
+    query_raw = state.get("query", "")
+    query = query_raw.lower()
+    tokens = _word_tokens(query_raw)
     risk_level = "low"
-    if "refund" in query or "delete" in query or "send" in query:
+    route = Route.SIMPLE
+
+    if _has_whole_word(query, _RISKY_TERMS):
         route = Route.RISKY
         risk_level = "high"
-    elif "status" in query or "order" in query or "lookup" in query:
+    elif _has_whole_word(query, _TOOL_TERMS):
         route = Route.TOOL
-    elif len(clean_words) < 5 and "it" in clean_words:
+    elif _is_missing_info(query, tokens):
         route = Route.MISSING_INFO
-    elif "timeout" in query or "fail" in query:
+    elif _has_whole_word(query, _ERROR_TERMS):
         route = Route.ERROR
+
     return {
         "route": route.value,
         "risk_level": risk_level,
@@ -65,12 +90,23 @@ def ask_clarification_node(state: AgentState) -> dict:
 def tool_node(state: AgentState) -> dict:
     """Call a mock tool.
 
-    Simulates transient failures for error-route scenarios to demonstrate retry loops.
-    TODO(student): implement idempotent tool execution and structured tool results.
+    Simulates transient failures when ``route`` is ``error``, ``should_retry`` is true,
+    and there is still retry budget (``attempt < max_attempts - 1`` after ``retry`` bump).
     """
     attempt = int(state.get("attempt", 0))
-    if state.get("route") == Route.ERROR.value and attempt < 2:
-        result = f"ERROR: transient failure attempt={attempt} scenario={state.get('scenario_id', 'unknown')}"
+    max_attempts = int(state.get("max_attempts", 3))
+    route = state.get("route", "")
+    should_retry = bool(state.get("should_retry", False))
+
+    transient = (
+        route == Route.ERROR.value
+        and should_retry
+        and attempt > 0
+        and attempt < max_attempts - 1
+    )
+    if transient:
+        sid = state.get("scenario_id", "unknown")
+        result = f"ERROR: transient failure attempt={attempt} scenario={sid}"
     else:
         result = f"mock-tool-result for scenario={state.get('scenario_id', 'unknown')}"
     return {
@@ -149,16 +185,15 @@ def answer_node(state: AgentState) -> dict:
 
 
 def evaluate_node(state: AgentState) -> dict:
-    """Evaluate tool results — the 'done?' check that enables retry loops.
-
-    TODO(student): replace heuristic with LLM-as-judge or structured validation.
-    """
+    """Evaluate tool results — gate for the retry loop via ``evaluation_result``."""
     tool_results = state.get("tool_results", [])
     latest = tool_results[-1] if tool_results else ""
-    if "ERROR" in latest:
+    if "ERROR" in latest.upper():
         return {
             "evaluation_result": "needs_retry",
-            "events": [make_event("evaluate", "completed", "tool result indicates failure, retry needed")],
+            "events": [
+                make_event("evaluate", "completed", "tool result indicates failure, retry needed"),
+            ],
         }
     return {
         "evaluation_result": "success",
@@ -167,14 +202,24 @@ def evaluate_node(state: AgentState) -> dict:
 
 
 def dead_letter_node(state: AgentState) -> dict:
-    """Log unresolvable failures for manual review.
-
-    Third layer of error strategy: retry -> fallback -> dead letter.
-    TODO(student): persist to dead-letter queue, alert on-call, or create support ticket.
-    """
+    """Log unresolvable failures when retry budget is exhausted (manual review / DLQ)."""
+    sid = state.get("scenario_id", "unknown")
+    attempt = int(state.get("attempt", 0))
+    max_attempts = int(state.get("max_attempts", 3))
+    msg = (
+        f"dead_letter: scenario={sid} attempt={attempt} max_attempts={max_attempts} "
+        "(exhausted retries; escalate to human)"
+    )
+    dl_msg = (
+        "Request could not be completed after maximum retry attempts. "
+        "Logged for manual review."
+    )
     return {
-        "final_answer": "Request could not be completed after maximum retry attempts. Logged for manual review.",
-        "events": [make_event("dead_letter", "completed", f"max retries exceeded, attempt={state.get('attempt', 0)}")],
+        "final_answer": dl_msg,
+        "errors": [msg],
+        "events": [
+            make_event("dead_letter", "completed", f"max retries exceeded, attempt={attempt}"),
+        ],
     }
 
 
